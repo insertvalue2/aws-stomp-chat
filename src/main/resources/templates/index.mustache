@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>채팅 (STOMP)</title>
+    <style>
+        body { margin: 20px; font-family: Arial, sans-serif; }
+        nav ul { list-style: none; padding: 0; display: flex; gap: 10px; }
+        nav a { padding: 8px 15px; background: #666; color: white; text-decoration: none; border-radius: 3px; }
+        nav a:hover { background: #555; }
+
+        .chat-area {
+            border: 1px solid #ccc;
+            height: 300px;
+            padding: 10px;
+            overflow-y: scroll;
+            background: #f9f9f9;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+
+        .message {
+            padding: 5px 10px;
+            margin: 3px 0;
+            background: white;
+            border-radius: 8px;
+            max-width: 80%;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        }
+
+        .message:nth-child(odd) {
+            background: #e1f5fe;
+            margin-left: 20%;
+        }
+
+        .status {
+            padding: 5px 10px;
+            border-radius: 3px;
+            font-size: 12px;
+            margin-bottom: 10px;
+            font-weight: bold;
+        }
+        .connected { background: #d4edda; color: #155724; }
+        .disconnected { background: #f8d7da; color: #721c24; }
+
+        .message-form {
+            margin-top: 15px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background: #f8f9fa;
+        }
+
+        .message-form input {
+            padding: 8px;
+            width: 70%;
+            margin-right: 10px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+        }
+
+        .message-form button {
+            padding: 8px 15px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+
+        .message-form button:hover {
+            background: #0056b3;
+        }
+
+        .message-form button:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+        }
+
+        .info {
+            color: #666;
+            font-size: 13px;
+            margin-bottom: 10px;
+        }
+
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 8px;
+            border-radius: 3px;
+            margin: 5px 0;
+        }
+    </style>
+</head>
+<body>
+<nav>
+    <ul>
+        <li><a href="/">목록</a></li>
+        <li><a href="/save-form">작성</a></li>
+    </ul>
+</nav>
+
+<h3>채팅 (STOMP 방식)</h3>
+<p class="info">표준화된 메시징 프로토콜 - 순수 WebSocket의 복잡성 해결</p>
+
+<div id="status" class="status disconnected">연결 중...</div>
+
+<div class="chat-area" id="chatArea">
+    {{#models}}
+        <div class="message">{{msg}}</div>
+    {{/models}}
+</div>
+
+<div class="message-form">
+    <form id="chatForm">
+        <input type="text" id="msgInput" placeholder="메시지를 입력하세요..." required>
+        <button type="submit" id="sendButton" disabled>연결 중...</button>
+    </form>
+</div>
+
+<!-- 수정된 라이브러리 로드 -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.6.1/sockjs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+<script>
+    /* ============================================
+     * 1. DOM 요소 참조 및 전역 변수 설정
+     * =========================================== */
+    const chatArea = document.getElementById('chatArea');
+    const status = document.getElementById('status');
+    const msgInput = document.getElementById('msgInput');
+    const chatForm = document.getElementById('chatForm');
+    const sendButton = document.getElementById('sendButton');
+
+    let stompClient = null;
+
+    /* ============================================
+     * 2. STOMP 연결 시작하는 함수 (수정 없음)
+     * =========================================== */
+    function connect() {
+        const socket = new SockJS('/ws');
+        stompClient = Stomp.over(socket);
+        stompClient.connect({}, onConnected, onError);
+    }
+
+    /* ============================================
+     * 3. 연결 성공 시 실행되는 콜백 함수 (수정 없음)
+     * =========================================== */
+    function onConnected() {
+        status.textContent = '실시간 연결됨 (STOMP)';
+        status.className = 'status connected';
+        sendButton.disabled = false;
+        sendButton.textContent = '전송';
+        msgInput.focus();
+
+        stompClient.subscribe('/topic/messages', onMessageReceived);
+        console.log('STOMP 연결 및 구독 완료');
+    }
+
+    /* ============================================
+     * 4. 연결 실패 시 실행되는 콜백 함수 (수정 없음)
+     * =========================================== */
+    function onError(error) {
+        status.textContent = '연결 에러 발생';
+        status.className = 'status disconnected';
+        sendButton.disabled = true;
+        sendButton.textContent = '연결 에러';
+        console.error('STOMP 연결 에러:', error);
+    }
+
+    /* ============================================
+     * 5. 메시지 수신 처리 함수 (핵심 수정 부분)
+     * =========================================== */
+    function onMessageReceived(message) {
+        try {
+            // ChatMessageDto JSON을 파싱해서 객체로 변환
+            const messageDto = JSON.parse(message.body);
+            console.log('STOMP DTO 메시지 수신:', messageDto);
+
+            // 에러 메시지 처리
+            if (messageDto.type === 'SYSTEM') {
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'error-message';
+                errorDiv.textContent = `[시스템] ${messageDto.content}`;
+                chatArea.appendChild(errorDiv);
+                chatArea.scrollTop = chatArea.scrollHeight;
+                return;
+            }
+
+            // 일반 채팅 메시지 처리
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message';
+
+            // 발신자와 메시지 내용 함께 표시 (Flutter와 동일한 형태)
+            const senderText = messageDto.sender ? `[${messageDto.sender}] ` : '';
+            messageDiv.textContent = `${senderText}${messageDto.content}`;
+
+            chatArea.appendChild(messageDiv);
+            chatArea.scrollTop = chatArea.scrollHeight;
+
+        } catch (error) {
+            console.error('메시지 파싱 오류:', error);
+            // JSON 파싱 실패 시 기존 방식으로 처리 (하위 호환성)
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message';
+            messageDiv.textContent = message.body;
+            chatArea.appendChild(messageDiv);
+            chatArea.scrollTop = chatArea.scrollHeight;
+        }
+    }
+
+    /* ============================================
+     * 6. 메시지 전송 함수 (핵심 수정 부분)
+     * =========================================== */
+    function sendMessage() {
+        const content = msgInput.value.trim();
+
+        if (content && stompClient && stompClient.connected) {
+            // ChatMessageDto 형태로 데이터 구성 (Flutter와 동일한 구조)
+            const messageDto = {
+                id: Date.now().toString(),           // 임시 ID (밀리초)
+                content: content,
+                sender: "웹사용자",                  // 웹 클라이언트 식별
+                type: "CHAT",                       // Flutter와 동일한 대문자
+                timestamp: new Date().toISOString() // ISO 8601 형식
+            };
+
+            // JSON 문자열로 변환하여 전송
+            stompClient.send("/app/chat", {}, JSON.stringify(messageDto));
+
+            msgInput.value = '';
+            msgInput.focus();
+            console.log('STOMP DTO 메시지 전송:', messageDto);
+
+        } else if (!stompClient || !stompClient.connected) {
+            alert('STOMP 연결이 끊어져 있습니다.');
+        }
+    }
+
+    /* ============================================
+     * 7. 이벤트 리스너 등록 (수정 없음)
+     * =========================================== */
+    chatForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        sendMessage();
+    });
+
+    msgInput.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            sendMessage();
+        }
+    });
+
+    /* ============================================
+     * 8. 페이지 종료 시 정리 작업 (수정 없음)
+     * =========================================== */
+    window.addEventListener('beforeunload', () => {
+        if (stompClient) {
+            stompClient.disconnect();
+            console.log('STOMP 연결 정리 완료');
+        }
+    });
+
+    /* ============================================
+     * 9. 페이지 초기화 작업 (수정 없음)
+     * =========================================== */
+    chatArea.scrollTop = chatArea.scrollHeight;
+    connect();
+</script>
+</body>
+</html>
